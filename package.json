@@ -1,0 +1,14 @@
+{
+  "name": "posture-guard",
+  "version": "1.0.0",
+  "description": "Webcam posture checker browser extension",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "type": "module",
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^1.2.3"
+  },
+  "private": true
+}
