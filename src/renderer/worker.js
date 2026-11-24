@@ -1,8 +1,8 @@
-// Hidden offscreen document: opens the camera briefly, samples a few frames,
-// measures posture, then closes the camera again (the camera light only blinks on during a check).
+// Hidden window: opens the camera briefly, samples a few frames, measures posture, then closes the
+// camera again (the camera light only blinks on during a check). Also plays the warning chime.
 
-import { computeMetrics, medianMetrics } from './lib/posture.js';
-import { createDetector, openCamera } from './lib/detector.js';
+import { computeMetrics, medianMetrics } from '../shared/posture.js';
+import { createDetector, openCamera } from '../shared/detector.js';
 
 const video = document.getElementById('video');
 let detectorPromise = null;
@@ -10,7 +10,10 @@ let detectorPromise = null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function sample(deviceId) {
-  detectorPromise ??= createDetector('IMAGE');
+  detectorPromise ??= createDetector('IMAGE').catch((e) => {
+    detectorPromise = null; // retry next time
+    throw e;
+  });
   const detector = await detectorPromise;
   const stream = await openCamera(deviceId);
   try {
@@ -49,15 +52,17 @@ function chime() {
   setTimeout(() => ctx.close(), 1000);
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.target !== 'offscreen') return;
-  if (msg.type === 'sample') {
-    sample(msg.deviceId)
-      .then((metrics) => sendResponse({ metrics }))
-      .catch((e) => sendResponse({ error: e.name || 'Error', message: e.message }));
-    return true;
-  }
-  if (msg.type === 'chime') {
+window.pg.onWorkerRequest(async ({ id, type, deviceId }) => {
+  if (type === 'chime') {
     chime();
+    window.pg.workerRespond({ id, ok: true });
+    return;
+  }
+  if (type === 'sample') {
+    try {
+      window.pg.workerRespond({ id, metrics: await sample(deviceId) });
+    } catch (e) {
+      window.pg.workerRespond({ id, error: e.name || 'Error', message: e.message });
+    }
   }
 });

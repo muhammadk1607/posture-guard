@@ -1,14 +1,84 @@
 {
   "name": "posture-guard",
-  "version": "1.0.0",
-  "description": "Webcam posture checker browser extension",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "productName": "Posture Guard",
+  "version": "2.0.0",
+  "description": "Desktop app that checks your sitting posture through your webcam and reports on your habits",
+  "author": {
+    "name": "muhammadk1607"
   },
-  "keywords": [],
+  "license": "UNLICENSED",
+  "private": true,
   "type": "module",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/",
+    "icons": "electron scripts/render-icons.cjs",
+    "dist": "electron-builder",
+    "dist:linux": "electron-builder --linux",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "update-mediapipe": "cp node_modules/@mediapipe/tasks-vision/vision_bundle.mjs vendor/ && cp node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_internal.* vendor/wasm/"
+  },
   "dependencies": {
+    "chart.js": "^4.5.1"
+  },
+  "devDependencies": {
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
     "@mediapipe/tasks-vision": "^1.2.3"
   },
-  "private": true
+  "build": {
+    "appId": "com.postureguard.app",
+    "productName": "Posture Guard",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**",
+      "vendor/**",
+      "models/**",
+      "icons/**",
+      "package.json",
+      "!**/*.map"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "icon": "build/icon.png",
+      "desktop": {
+        "entry": {
+          "Name": "Posture Guard",
+          "Comment": "Checks your sitting posture through your webcam",
+          "StartupWMClass": "Posture Guard"
+        }
+      }
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "runAfterFinish": true
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.healthcare-fitness",
+      "icon": "build/icon.png",
+      "extendInfo": {
+        "NSCameraUsageDescription": "Posture Guard briefly uses the camera to check your sitting posture. Images never leave your Mac.",
+        "LSUIElement": true
+      }
+    }
+  }
 }

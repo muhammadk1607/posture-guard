@@ -1,4 +1,5 @@
-// Shared posture logic: metric extraction and evaluation (no MediaPipe import, so the service worker can use it).
+// Shared posture logic: metric extraction and evaluation. No MediaPipe or DOM imports,
+// so both the Electron main process and the renderer pages can use it.
 // Everything runs locally; no frames ever leave the machine.
 
 // MediaPipe pose landmark indices
@@ -17,7 +18,46 @@ export const DEFAULT_SETTINGS = {
   deviceId: '',
   sound: true,
   baseline: null, // set by calibration
+  pausedUntil: 0, // epoch ms; 0 = not paused. Infinity is not JSON-safe, so "until resumed" uses enabled=false.
+  openAtLogin: false,
+  notifyCooldownMin: 0, // minimum minutes between two warning notifications (0 = every bad check)
 };
+
+/** Every posture problem the evaluator can report. Order is used for stable display. */
+export const ISSUES = {
+  slouch: {
+    title: 'You are slouching, or your head is pushed forward',
+    short: 'Slouching / forward head',
+    fix: 'Sit up tall. Pull your shoulders back and tuck your chin a little so your ears line up over your shoulders.',
+  },
+  'lean-in': {
+    title: 'You are leaning toward the screen',
+    short: 'Leaning toward the screen',
+    fix: "Sit back so the chair supports your lower back, and keep about an arm's length from the screen.",
+  },
+  recline: {
+    title: 'You are reclining or sliding down in your chair',
+    short: 'Reclining / sliding down',
+    fix: 'Shift your hips to the back of the seat and sit upright with your feet flat on the floor.',
+  },
+  shoulders: {
+    title: 'Your shoulders are uneven',
+    short: 'Uneven shoulders',
+    fix: "Level your shoulders. Don't lean on one armrest or elbow, and relax the raised shoulder.",
+  },
+  'head-tilt': {
+    title: 'Your head is tilted to one side',
+    short: 'Head tilted',
+    fix: 'Straighten your neck and keep your head level. Centre the screen in front of you if it is off to the side.',
+  },
+  'side-lean': {
+    title: 'You are leaning to one side',
+    short: 'Leaning sideways',
+    fix: 'Centre your body over your hips and face the screen squarely.',
+  },
+};
+
+const issue = (code) => ({ code, title: ISSUES[code].title, fix: ISSUES[code].fix });
 
 const SENSITIVITY_SCALE = { low: 1.5, medium: 1, high: 0.7 };
 
@@ -93,11 +133,7 @@ export function evaluate(m, baseline, sensitivity = 'medium') {
   if (b.neckRatio) {
     const drop = (b.neckRatio - m.neckRatio) / b.neckRatio;
     if (drop > 0.15 * s) {
-      issues.push({
-        code: 'slouch',
-        title: 'You are slouching, or your head is pushed forward',
-        fix: 'Sit up tall. Pull your shoulders back and tuck your chin a little so your ears line up over your shoulders.',
-      });
+      issues.push(issue('slouch'));
       penalty += Math.min(40, drop * 150);
     }
   }
@@ -105,59 +141,34 @@ export function evaluate(m, baseline, sensitivity = 'medium') {
   if (b.shoulderWidth) {
     const grow = (m.shoulderWidth - b.shoulderWidth) / b.shoulderWidth;
     if (grow > 0.15 * s) {
-      issues.push({
-        code: 'lean-in',
-        title: 'You are leaning toward the screen',
-        fix: 'Sit back so the chair supports your lower back, and keep about an arm\'s length from the screen.',
-      });
+      issues.push(issue('lean-in'));
       penalty += Math.min(30, grow * 120);
     } else if (grow < -0.22 * s) {
-      issues.push({
-        code: 'recline',
-        title: 'You are reclining or sliding down in your chair',
-        fix: 'Shift your hips to the back of the seat and sit upright with your feet flat on the floor.',
-      });
+      issues.push(issue('recline'));
       penalty += Math.min(20, -grow * 80);
     }
   }
 
   const tiltDiff = Math.abs(m.shoulderTilt - b.shoulderTilt);
   if (tiltDiff > 6 * s) {
-    issues.push({
-      code: 'shoulders',
-      title: 'Your shoulders are uneven',
-      fix: 'Level your shoulders. Don\'t lean on one armrest or elbow, and relax the raised shoulder.',
-    });
+    issues.push(issue('shoulders'));
     penalty += Math.min(25, tiltDiff * 2);
   }
 
   if (m.headTilt !== null && b.headTilt !== null) {
     const headDiff = Math.abs(m.headTilt - b.headTilt);
     if (headDiff > 9 * s) {
-      issues.push({
-        code: 'head-tilt',
-        title: 'Your head is tilted to one side',
-        fix: 'Straighten your neck and keep your head level. Centre the screen in front of you if it is off to the side.',
-      });
+      issues.push(issue('head-tilt'));
       penalty += Math.min(20, headDiff * 1.5);
     }
   }
 
   const offDiff = Math.abs(m.headOffset - b.headOffset);
   if (offDiff > 0.18 * s) {
-    issues.push({
-      code: 'side-lean',
-      title: 'You are leaning to one side',
-      fix: 'Centre your body over your hips and face the screen squarely.',
-    });
+    issues.push(issue('side-lean'));
     penalty += Math.min(20, offDiff * 60);
   }
 
   const score = Math.max(0, Math.round(100 - penalty));
   return { ok: issues.length === 0, score, issues };
-}
-
-export async function getSettings() {
-  const stored = await chrome.storage.local.get(Object.keys(DEFAULT_SETTINGS));
-  return { ...DEFAULT_SETTINGS, ...stored };
 }

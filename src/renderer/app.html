@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; media-src 'self' blob: mediastream:; img-src 'self' data: blob:"
+    />
+    <title>Posture Guard</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="../../node_modules/chart.js/dist/chart.umd.min.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img src="../../icons/icon48.png" alt="" width="28" height="28" />
+        <span>Posture Guard</span>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-view="reports" id="tab-reports">Reports</button>
+        <button role="tab" data-view="setup" id="tab-setup">Settings &amp; calibration</button>
+      </nav>
+      <div class="now" id="now">
+        <span class="pill" id="now-pill"><span class="dot"></span><span id="now-text">—</span></span>
+        <button id="check-now">Check now</button>
+      </div>
+    </header>
+
+    <!-- ===================== REPORTS ===================== -->
+    <main id="view-reports" class="view" hidden>
+      <div class="toolbar">
+        <div class="segmented" id="range" role="radiogroup" aria-label="Time range">
+          <button data-range="today" role="radio">Today</button>
+          <button data-range="7" role="radio">7 days</button>
+          <button data-range="30" role="radio">30 days</button>
+          <button data-range="90" role="radio">90 days</button>
+        </div>
+        <span class="muted" id="range-label"></span>
+        <span class="spacer"></span>
+        <button id="export">Export CSV</button>
+        <button id="clear" class="ghost">Clear history</button>
+      </div>
+
+      <div id="empty" class="card empty" hidden>
+        <h2>No posture data yet</h2>
+        <p class="muted">
+          Posture Guard records a result every time it checks your posture. Leave it running in the tray and
+          reports will fill in here. Make sure you have calibrated in <a href="#setup">Settings &amp; calibration</a>.
+        </p>
+      </div>
+
+      <div id="report">
+        <section class="tiles" id="tiles" aria-label="Summary"></section>
+
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h2>Time in good vs poor posture</h2>
+              <p class="muted" id="time-sub">Hours measured while you were at your desk</p>
+            </div>
+            <ul class="legend">
+              <li><span class="key good"></span>Good posture</li>
+              <li><span class="key bad"></span>Poor posture</li>
+            </ul>
+          </div>
+          <div class="chart-box tall"><canvas id="chart-time" aria-label="Good and poor posture time"></canvas></div>
+          <details class="data-table"><summary>Show as table</summary><div id="table-time"></div></details>
+        </section>
+
+        <div class="grid-2">
+          <section class="card">
+            <div class="card-head">
+              <div>
+                <h2>Most common posture problems</h2>
+                <p class="muted">Share of poor-posture checks where each problem was seen</p>
+              </div>
+            </div>
+            <div class="chart-box" id="issues-box"><canvas id="chart-issues" aria-label="Posture problems"></canvas></div>
+            <p class="muted" id="issues-empty" hidden>No poor posture recorded in this period. Nice.</p>
+            <details class="data-table"><summary>Show as table</summary><div id="table-issues"></div></details>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <div>
+                <h2>How to fix your top problems</h2>
+                <p class="muted">Based on what was seen most often</p>
+              </div>
+            </div>
+            <ol class="fixes" id="fixes"></ol>
+          </section>
+        </div>
+
+        <div class="grid-2">
+          <section class="card">
+            <div class="card-head">
+              <div>
+                <h2>Average posture score</h2>
+                <p class="muted" id="score-sub">0–100, higher is better</p>
+              </div>
+            </div>
+            <div class="chart-box"><canvas id="chart-score" aria-label="Average posture score"></canvas></div>
+            <details class="data-table"><summary>Show as table</summary><div id="table-score"></div></details>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <div>
+                <h2>When poor posture happens</h2>
+                <p class="muted">Share of checks with poor posture, by hour of day</p>
+              </div>
+            </div>
+            <div class="chart-box"><canvas id="chart-hours" aria-label="Poor posture by hour of day"></canvas></div>
+            <details class="data-table"><summary>Show as table</summary><div id="table-hours"></div></details>
+          </section>
+        </div>
+
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h2>Warnings</h2>
+              <p class="muted">The most recent posture warnings in this period</p>
+            </div>
+          </div>
+          <div id="warnings"></div>
+        </section>
+      </div>
+    </main>
+
+    <!-- ===================== SETUP ===================== -->
+    <main id="view-setup" class="view narrow" hidden>
+      <section class="card" id="permission-card">
+        <h2>1. Allow camera access</h2>
+        <p>
+          Posture Guard opens your camera for about 2 seconds at each check, measures your posture on this computer,
+          and closes the camera again. No images are saved or sent anywhere.
+        </p>
+        <button id="grant" class="primary">Turn on camera preview</button>
+        <p id="perm-error" class="error" hidden></p>
+      </section>
+
+      <section class="card" id="live-card" hidden>
+        <h2>2. Calibrate your good posture</h2>
+        <div class="row">
+          <label>Camera
+            <select id="camera"></select>
+          </label>
+        </div>
+        <div class="stage">
+          <video id="video" playsinline muted></video>
+          <canvas id="overlay"></canvas>
+          <div id="countdown" hidden></div>
+        </div>
+        <div id="live-feedback" class="feedback">Starting camera…</div>
+        <ol class="tips">
+          <li>Place the camera at or slightly below eye level, so your head and both shoulders are in view.</li>
+          <li>Sit the way you want to sit: back against the chair, shoulders relaxed, ears over shoulders, screen at arm's length.</li>
+          <li>Click <b>Calibrate</b> and hold still for 3 seconds.</li>
+        </ol>
+        <div class="row-buttons">
+          <button id="calibrate" class="primary">Calibrate</button>
+          <button id="stop-preview">Turn off preview</button>
+          <span id="cal-status" class="muted"></span>
+        </div>
+      </section>
+
+      <section class="card" id="settings-card">
+        <h2>3. Settings</h2>
+        <label class="switch-row">
+          <input type="checkbox" id="enabled" /> Check my posture automatically
+        </label>
+        <label>Check every
+          <select id="interval">
+            <option value="1">1 minute</option>
+            <option value="2">2 minutes</option>
+            <option value="5">5 minutes</option>
+            <option value="10">10 minutes</option>
+            <option value="15">15 minutes</option>
+            <option value="30">30 minutes</option>
+            <option value="60">60 minutes</option>
+          </select>
+        </label>
+        <label>Sensitivity
+          <select id="sensitivity">
+            <option value="low">Low: only obvious slouching</option>
+            <option value="medium">Medium</option>
+            <option value="high">High: strict</option>
+          </select>
+        </label>
+        <label>Warn me
+          <select id="cooldown">
+            <option value="0">At every check with poor posture</option>
+            <option value="5">At most every 5 minutes</option>
+            <option value="10">At most every 10 minutes</option>
+            <option value="15">At most every 15 minutes</option>
+            <option value="30">At most every 30 minutes</option>
+          </select>
+        </label>
+        <label class="switch-row">
+          <input type="checkbox" id="sound" /> Play a sound with warnings
+        </label>
+        <label class="switch-row">
+          <input type="checkbox" id="login" /> Start Posture Guard when I log in
+        </label>
+        <p class="muted">
+          Changes save automatically. Closing this window keeps Posture Guard running in the system tray; use
+          <b>Quit</b> in the tray menu to stop it.
+        </p>
+      </section>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

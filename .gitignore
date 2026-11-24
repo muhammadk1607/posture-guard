@@ -1,1 +1,4 @@
 node_modules/
+dist/
+# build resources (app icon) are needed for packaging, even if ignored globally
+!build/

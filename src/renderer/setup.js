@@ -1,60 +1,95 @@
-import { computeMetrics, medianMetrics, evaluate, getSettings } from './lib/posture.js';
-import { createDetector, openCamera } from './lib/detector.js';
+// Settings & calibration view: live camera preview with skeleton overlay, calibration, settings form.
+// The camera only runs while this view is open and the preview is on.
+
+import { computeMetrics, medianMetrics, evaluate } from '../shared/posture.js';
+import { createDetector, openCamera } from '../shared/detector.js';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
 const canvas = $('overlay');
 const ctx = canvas.getContext('2d');
 
-let settings = await getSettings();
+let settings = null;
 let stream = null;
 let detector = null;
 let latestMetrics = null;
+let latestEval = null;
 let calibrating = null; // array of samples while calibrating
+let rafId = null;
+let lastRender = 0;
 
-// ---------- settings form ----------
-
-$('enabled').checked = settings.enabled;
-$('interval').value = String(settings.intervalMin);
-$('sensitivity').value = settings.sensitivity;
-$('sound').checked = settings.sound;
-
-$('enabled').onchange = (e) => save({ enabled: e.target.checked });
-$('interval').onchange = (e) => save({ intervalMin: Number(e.target.value) });
-$('sensitivity').onchange = (e) => save({ sensitivity: e.target.value });
-$('sound').onchange = (e) => save({ sound: e.target.checked });
-
-async function save(patch) {
-  settings = { ...settings, ...patch };
-  await chrome.storage.local.set(patch);
-}
-
-function showCalStatus() {
-  $('cal-status').textContent = settings.baseline
-    ? `Calibrated ${new Date(settings.baseline.at).toLocaleString()}`
-    : 'Not calibrated yet';
-}
-showCalStatus();
-
-// ---------- camera ----------
-
-async function hasPermission() {
+const PREVIEW_KEY = 'pg.previewWanted';
+const previewWanted = () => {
   try {
-    const p = await navigator.permissions.query({ name: 'camera' });
-    return p.state === 'granted';
+    return localStorage.getItem(PREVIEW_KEY) === '1';
   } catch {
     return false;
   }
+};
+const setPreviewWanted = (v) => {
+  try {
+    localStorage.setItem(PREVIEW_KEY, v ? '1' : '0');
+  } catch {
+    // ignore
+  }
+};
+
+// ---------- settings form ----------
+
+export function applySettings(s, openAtLogin) {
+  settings = s;
+  $('enabled').checked = s.enabled;
+  $('interval').value = String(s.intervalMin);
+  $('sensitivity').value = s.sensitivity;
+  $('sound').checked = s.sound;
+  $('cooldown').value = String(s.notifyCooldownMin ?? 0);
+  $('login').checked = !!openAtLogin;
+  showCalStatus();
 }
 
+async function save(patch) {
+  settings = await window.pg.setSettings(patch);
+}
+
+$('enabled').onchange = (e) => save({ enabled: e.target.checked, pausedUntil: 0 });
+$('interval').onchange = (e) => save({ intervalMin: Number(e.target.value) });
+$('sensitivity').onchange = (e) => save({ sensitivity: e.target.value });
+$('sound').onchange = (e) => save({ sound: e.target.checked });
+$('cooldown').onchange = (e) => save({ notifyCooldownMin: Number(e.target.value) });
+$('login').onchange = (e) => save({ openAtLogin: e.target.checked });
+
+function showCalStatus() {
+  $('cal-status').textContent = settings?.baseline
+    ? `Calibrated ${new Date(settings.baseline.at).toLocaleString()}`
+    : 'Not calibrated yet';
+}
+
+// ---------- camera ----------
+
 async function startCamera() {
-  stream?.getTracks().forEach((t) => t.stop());
+  stopCamera();
+  if (!(await window.pg.ensureCameraAccess())) {
+    throw Object.assign(new Error('Camera access is turned off for Posture Guard in System Settings.'), {
+      name: 'NotAllowedError',
+    });
+  }
   stream = await openCamera(settings.deviceId);
   video.srcObject = stream;
   await video.play();
+  window.pg.setPreviewActive(true);
   $('permission-card').hidden = true;
   $('live-card').hidden = false;
   await populateCameras();
+  loop();
+}
+
+function stopCamera() {
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+  stream?.getTracks().forEach((t) => t.stop());
+  stream = null;
+  video.srcObject = null;
+  window.pg.setPreviewActive(false);
 }
 
 async function populateCameras() {
@@ -76,20 +111,36 @@ $('camera').onchange = async (e) => {
   await startCamera();
 };
 
-$('grant').onclick = async () => {
+async function tryStart() {
   $('perm-error').hidden = true;
   try {
     await startCamera();
-    loop();
+    setPreviewWanted(true);
   } catch (e) {
+    $('permission-card').hidden = false;
+    $('live-card').hidden = true;
     $('perm-error').hidden = false;
     $('perm-error').textContent =
       e.name === 'NotAllowedError'
-        ? 'Camera access was blocked. Click the camera icon in the address bar (or open chrome://settings/content/camera), allow this extension, then try again.'
+        ? `Camera access was blocked. ${
+            window.pg.platform === 'darwin'
+              ? 'Open System Settings → Privacy & Security → Camera, allow Posture Guard, then try again.'
+              : 'Check that no privacy switch or other setting is blocking the camera, then try again.'
+          }`
         : e.name === 'NotFoundError'
           ? 'No camera found. Plug one in and try again.'
-          : `Could not start camera: ${e.message}`;
+          : e.name === 'NotReadableError'
+            ? 'The camera is busy in another app. Close it and try again.'
+            : `Could not start camera: ${e.message}`;
   }
+}
+
+$('grant').onclick = tryStart;
+$('stop-preview').onclick = () => {
+  setPreviewWanted(false);
+  stopCamera();
+  $('live-card').hidden = true;
+  $('permission-card').hidden = false;
 };
 
 // ---------- live detection loop ----------
@@ -103,6 +154,7 @@ async function loop() {
   detector ??= await createDetector('VIDEO');
   let lastTs = -1;
   const tick = () => {
+    if (!stream) return;
     if (video.readyState >= 2) {
       const ts = performance.now();
       if (ts > lastTs) {
@@ -115,7 +167,7 @@ async function loop() {
         renderFeedback();
       }
     }
-    requestAnimationFrame(tick);
+    rafId = requestAnimationFrame(tick);
   };
   tick();
 }
@@ -144,8 +196,6 @@ function draw(lm) {
   }
 }
 
-let latestEval = null;
-let lastRender = 0;
 function renderFeedback() {
   const now = performance.now();
   if (now - lastRender < 300) return; // keep the text readable
@@ -155,7 +205,7 @@ function renderFeedback() {
   if (!latestMetrics) {
     latestEval = null;
     el.className = 'feedback warn';
-    el.textContent = 'Can\'t see you clearly. Make sure your head and both shoulders are in view.';
+    el.textContent = "Can't see you clearly. Make sure your head and both shoulders are in view.";
     return;
   }
   if (!settings.baseline) {
@@ -170,9 +220,18 @@ function renderFeedback() {
     el.textContent = `Good posture: ${latestEval.score}/100`;
   } else {
     el.className = 'feedback bad';
-    el.innerHTML = `<b>${latestEval.score}/100</b><ul>${latestEval.issues
-      .map((i) => `<li><b>${i.title}.</b> ${i.fix}</li>`)
-      .join('')}</ul>`;
+    el.replaceChildren();
+    const b = document.createElement('b');
+    b.textContent = `${latestEval.score}/100`;
+    const ul = document.createElement('ul');
+    for (const i of latestEval.issues) {
+      const li = document.createElement('li');
+      const t = document.createElement('b');
+      t.textContent = `${i.title}. `;
+      li.append(t, i.fix);
+      ul.append(li);
+    }
+    el.append(b, ul);
   }
 }
 
@@ -197,7 +256,8 @@ $('calibrate').onclick = async () => {
 
   if (samples.length < 10) {
     $('live-feedback').className = 'feedback warn';
-    $('live-feedback').textContent = 'Calibration failed: couldn\'t see your head and shoulders. Adjust the camera and try again.';
+    $('live-feedback').textContent =
+      "Calibration failed: couldn't see your head and shoulders. Adjust the camera and try again.";
     return;
   }
   const baseline = { ...medianMetrics(samples), at: Date.now() };
@@ -208,10 +268,15 @@ $('calibrate').onclick = async () => {
   lastRender = performance.now() + 1500; // keep the message up briefly
 };
 
-// ---------- boot ----------
+// ---------- view lifecycle ----------
 
-if (await hasPermission()) {
-  $('grant').click();
+export function showSetup() {
+  // Auto-start the preview if the user had it on, or on first run (not yet calibrated).
+  if (!stream && (previewWanted() || !settings?.baseline)) tryStart();
 }
 
-window.addEventListener('pagehide', () => stream?.getTracks().forEach((t) => t.stop()));
+export function hideSetup() {
+  stopCamera();
+}
+
+window.addEventListener('pagehide', stopCamera);

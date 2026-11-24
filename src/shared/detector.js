@@ -1,11 +1,14 @@
-// Pose detector + camera helpers (page contexts only: setup page and offscreen document).
+// Pose detector + camera helpers (renderer pages only: the app window and the hidden worker window).
+// Paths resolve against this file, served from the app:// protocol registered in the main process.
 
-import { FilesetResolver, PoseLandmarker } from '../vendor/vision_bundle.mjs';
+import { FilesetResolver, PoseLandmarker } from '../../vendor/vision_bundle.mjs';
+
+const asset = (p) => new URL(`../../${p}`, import.meta.url).href;
 
 export async function createDetector(runningMode = 'IMAGE') {
-  const fileset = await FilesetResolver.forVisionTasks(chrome.runtime.getURL('vendor/wasm'));
+  const fileset = await FilesetResolver.forVisionTasks(asset('vendor/wasm'));
   const options = {
-    baseOptions: { modelAssetPath: chrome.runtime.getURL('models/pose_landmarker_lite.task') },
+    baseOptions: { modelAssetPath: asset('models/pose_landmarker_lite.task') },
     runningMode,
     numPoses: 1,
     minPoseDetectionConfidence: 0.5,
